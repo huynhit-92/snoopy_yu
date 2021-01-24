@@ -3,6 +3,9 @@ import { fetchCaption } from '../config/enviroment'
 import ReactPlayer from 'react-player'
 import parser from 'fast-xml-parser'
 import _ from 'lodash'
+import Kuroshiro from "kuroshiro"
+import KuromojiAnalyzer from "kuroshiro-analyzer-kuromoji"
+import ReactHtmlParser from 'react-html-parser'
 
 export default class Watch extends Component {
   constructor(props) {
@@ -11,7 +14,8 @@ export default class Watch extends Component {
       playing: false,
       captions: [],
       vidId: props.match.params.id,
-      currentSecond: 1
+      currentSecond: 1,
+      kuroshiro: null
     }
   }
 
@@ -30,14 +34,33 @@ export default class Watch extends Component {
 
   fetchVidCaption() {
     fetchCaption(this.state.vidId).then((result) => {
-      let captions = parser.parse(result.data, { ignoreAttributes: false })['transcript']['text']
-      captions = captions.map(e => ({
+      let captions = parser.parse(result.data, { ignoreAttributes: false })['transcript']
+      if (_.isEmpty(captions)) { return }
+      captions = captions['text'].map(e => ({
         text: e['#text'],
         start: parseFloat(e['@_start']),
-        end: parseFloat(e['@_start']) + parseFloat(e['@_dur'])
+        end: parseFloat(e['@_start']) + parseFloat(e['@_dur']),
+        translatedCaption: ""
       }))
       this.setState({ captions: captions })
+
+      let texts = captions.map(e => e['text']).join("$$$")
+      this.translateCaption(texts, { mode: 'furigana' })
     })
+  }
+
+  async translateCaption(texts, options = {}) {
+    if (!this.state.kuroshiro) {
+      let kuroshiro = new Kuroshiro()
+      await kuroshiro.init(new KuromojiAnalyzer({ dictPath: '/dict/' }))
+      this.setState({ kuroshiro: kuroshiro })
+    }
+    let translatedCaptions = await this.state.kuroshiro.convert(texts, {mode:"furigana", to:"hiragana"})
+    translatedCaptions = translatedCaptions.split("$$$")
+    let newCaptions = _.map(this.state.captions, (e, index) => {
+      return { ...e, translatedCaption: translatedCaptions[index] }
+    })
+    this.setState({ captions: newCaptions })
   }
 
   onProgress = () => {
@@ -49,9 +72,10 @@ export default class Watch extends Component {
   }
 
   getCaption = () => {
+    if (_.isEmpty(this.state.captions)) { return "hien chua co sub" }
     let second = this.state.currentSecond;
-    let caption = this.state.captions.find(e => (e['start'] < second || e['start'] - 0.5 < second ) && second < e['end'] - 0.5)
-    return _.get(caption, 'text')
+    let caption = _.find(this.state.captions, e => (e['start'] < second || e['start'] - 0.5 < second ) && second < e['end'] - 0.5)
+    return _.get(caption, 'translatedCaption')
   }
 
   seekTo = (second) => {
@@ -85,7 +109,7 @@ export default class Watch extends Component {
             </div>
           </div>
           <div>
-            <p class="h4 mt-2">{this.getCaption()}</p>
+            <p className="h4 mt-2">{ ReactHtmlParser(this.getCaption()) }</p>
           </div>
         </div>
       </div>
